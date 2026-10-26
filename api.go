@@ -12,8 +12,8 @@ import (
 // This is a helper function that will convert the response
 // to JSON
 func WriteJSON(w http.ResponseWriter, status int, v any ) error {
-	w.WriteHeader(status) // Set the status for the response
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status) // Set the status for the response
 	return json.NewEncoder(w).Encode(v)
 }
 
@@ -57,6 +57,7 @@ func (s *APIServer) Run(){
 	// Thus, we will make our own custom functions that will allow us
 	// to handle error where we want
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount))
+	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccount))
 
 	log.Println("Server running at port: ", s.listenAddr)
 
@@ -75,12 +76,12 @@ func (s *APIServer) handleAccount(w http.ResponseWriter, r *http.Request) error 
 		default:
 			return fmt.Errorf("Method not allowed: %s", r.Method)
 	}
-	return nil
 }
 
 
 func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) error {
-	return nil
+	account := NewAccount("suraj", "sahani")
+	return WriteJSON(w, http.StatusOK, account)
 }
 
 
