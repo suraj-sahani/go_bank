@@ -1,9 +1,22 @@
 package main
 
-import "fmt"
+import (
+	"log"
 
-func main(){
-	server := NewAPIServer(":3000")
+	"github.com/joho/godotenv"
+)
+
+func main() {
+	// Load .env only once at the very start
+	if err := godotenv.Load(); err != nil {
+		log.Println("Notice: No .env file found, falling back to system environment variables")
+	}
+
+	store, err := NewPostgresStore()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	server := NewAPIServer(":3000", store)
 	server.Run()
-	fmt.Println("Hello World")
 }
