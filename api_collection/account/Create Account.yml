@@ -1,0 +1,23 @@
+info:
+  name: Create Account
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{BASE_URL}}/account"
+  body:
+    type: json
+    data: |-
+      {
+        "firstName": "John",
+        "lastname": "Doe"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
