@@ -12,7 +12,7 @@ func main() {
 		log.Println("Notice: No .env file found, falling back to system environment variables")
 	}
 
-	store, err := NewPostgresStore()
+	store, err := NewPostgresAccountStore()
 	if err != nil {
 		log.Fatal(err)
 	}

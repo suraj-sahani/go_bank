@@ -1,2 +1,17 @@
+# Environment variables
 .env
+
+# Compiled binaries
 bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test and coverage
+*.test
+*.out
+
+# macOS
+.DS_Store

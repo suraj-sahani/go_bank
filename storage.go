@@ -2,14 +2,18 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
-	"log"
 	"os"
 
 	_ "github.com/lib/pq"
 )
 
-type Storage interface {
+// ErrAccountNotFound is returned when an account lookup yields no results.
+var ErrAccountNotFound = errors.New("account not found")
+
+// AccountStore defines the interface for account persistence operations.
+type AccountStore interface {
 	CreateAccount(*Account) error
 	UpdateAccount(*Account) error
 	DeleteAccount(int) error
@@ -17,39 +21,39 @@ type Storage interface {
 	GetAccountByID(int) (*Account, error)
 }
 
-type PostgresStore struct {
+// PostgresAccountStore implements AccountStore using a PostgreSQL database.
+type PostgresAccountStore struct {
 	db *sql.DB
 }
 
-func CreateAccount(*Account) error {
-	return nil
-}
-
-func NewPostgresStore() (*PostgresStore, error) {
+// NewPostgresAccountStore connects to PostgreSQL using the DATABASE_URL
+// environment variable and returns a ready-to-use store.
+func NewPostgresAccountStore() (*PostgresAccountStore, error) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		log.Fatal("DATABASE_URL must be set")
+		return nil, fmt.Errorf("DATABASE_URL environment variable must be set")
 	}
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &PostgresStore{
+	return &PostgresAccountStore{
 		db: db,
 	}, nil
 }
 
-func (s *PostgresStore) Init() error {
+// Init creates the required database tables if they don't already exist.
+func (s *PostgresAccountStore) Init() error {
 	return s.createAccountTable()
 }
 
-func (s *PostgresStore) createAccountTable() error {
+func (s *PostgresAccountStore) createAccountTable() error {
 	query := `CREATE TABLE IF NOT EXISTS accounts (
 			id             SERIAL PRIMARY KEY,
 			first_name     VARCHAR(50) NOT NULL,
@@ -64,7 +68,7 @@ func (s *PostgresStore) createAccountTable() error {
 	return err
 }
 
-func (s *PostgresStore) CreateAccount(a *Account) error {
+func (s *PostgresAccountStore) CreateAccount(a *Account) error {
 	query := `
 			INSERT INTO accounts (
 				first_name,
@@ -74,7 +78,7 @@ func (s *PostgresStore) CreateAccount(a *Account) error {
 			)
 			VALUES ($1, $2, $3, $4)`
 
-	res, err := s.db.Exec(
+	_, err := s.db.Exec(
 		query,
 		a.FirstName,
 		a.LastName,
@@ -82,29 +86,44 @@ func (s *PostgresStore) CreateAccount(a *Account) error {
 		a.Balance,
 	)
 
-	fmt.Printf("%+v\n", res)
-
 	return err
 }
 
-func (s *PostgresStore) UpdateAccount(*Account) error {
+func (s *PostgresAccountStore) UpdateAccount(*Account) error {
 	return nil
 }
 
-func (s *PostgresStore) DeleteAccount(id int) error {
+func (s *PostgresAccountStore) DeleteAccount(id int) error {
+	query := `DELETE FROM accounts WHERE id = $1`
+
+	result, err := s.db.Exec(query, id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return ErrAccountNotFound
+	}
+
 	return nil
 }
 
-func (s *PostgresStore) GetAccounts() ([]*Account, error) {
+func (s *PostgresAccountStore) GetAccounts() ([]*Account, error) {
 	query := `SELECT * FROM accounts`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
 	accounts := make([]*Account, 0)
 	for rows.Next() {
-		acc, err := scanToAccount(rows)
+		acc, err := scanRowToAccount(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -114,22 +133,22 @@ func (s *PostgresStore) GetAccounts() ([]*Account, error) {
 	return accounts, nil
 }
 
-func (s *PostgresStore) GetAccountByID(id int) (*Account, error) {
+func (s *PostgresAccountStore) GetAccountByID(id int) (*Account, error) {
 	query := `SELECT * FROM accounts WHERE id = $1`
 
 	rows, err := s.db.Query(query, id)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
 	for rows.Next() {
-		acc, err := scanToAccount(rows)
-		return acc, err
+		return scanRowToAccount(rows)
 	}
-	return nil, err
+	return nil, ErrAccountNotFound
 }
 
-func scanToAccount(rows *sql.Rows) (*Account, error) {
+func scanRowToAccount(rows *sql.Rows) (*Account, error) {
 	acc := new(Account)
 
 	err := rows.Scan(
