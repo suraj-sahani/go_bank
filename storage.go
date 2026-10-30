@@ -108,7 +108,7 @@ func (s *PostgresStore) GetAccounts() ([]*Account, error) {
 
 		err := rows.Scan(
 			&acc.ID,
-			&acc.Firstname,
+			&acc.FirstName,
 			&acc.LastName,
 			&acc.AccountNumber,
 			&acc.Balance,
