@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 )
@@ -17,7 +19,7 @@ func WriteJSON(w http.ResponseWriter, status int, v any) error {
 }
 
 type APIError struct {
-	Error string
+	Error string `json:"error"`
 }
 
 // Our custom handler function that allow us to handle
@@ -78,8 +80,19 @@ func (s *APIServer) handleGetAllAccounts(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) error {
-	account := NewAccount("suraj", "sahani")
-	return WriteJSON(w, http.StatusOK, account)
+	// This will be a string and we need to conver it into an int
+	idStr := mux.Vars(r)["id"]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return fmt.Errorf("invalid id: %s", idStr)
+	}
+
+	acc, err := s.store.GetAccountByID(id)
+	if err != nil {
+		return err
+	}
+
+	return WriteJSON(w, http.StatusOK, acc)
 }
 
 func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) error {

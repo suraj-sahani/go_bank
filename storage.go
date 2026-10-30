@@ -104,17 +104,7 @@ func (s *PostgresStore) GetAccounts() ([]*Account, error) {
 
 	accounts := make([]*Account, 0)
 	for rows.Next() {
-		acc := new(Account)
-
-		err := rows.Scan(
-			&acc.ID,
-			&acc.FirstName,
-			&acc.LastName,
-			&acc.AccountNumber,
-			&acc.Balance,
-			&acc.CreatedAt,
-			&acc.UpdatedAt,
-		)
+		acc, err := scanToAccount(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -125,5 +115,32 @@ func (s *PostgresStore) GetAccounts() ([]*Account, error) {
 }
 
 func (s *PostgresStore) GetAccountByID(id int) (*Account, error) {
-	return nil, nil
+	query := `SELECT * FROM accounts WHERE id = $1`
+
+	rows, err := s.db.Query(query, id)
+	if err != nil {
+		return nil, err
+	}
+
+	for rows.Next() {
+		acc, err := scanToAccount(rows)
+		return acc, err
+	}
+	return nil, err
+}
+
+func scanToAccount(rows *sql.Rows) (*Account, error) {
+	acc := new(Account)
+
+	err := rows.Scan(
+		&acc.ID,
+		&acc.FirstName,
+		&acc.LastName,
+		&acc.AccountNumber,
+		&acc.Balance,
+		&acc.CreatedAt,
+		&acc.UpdatedAt,
+	)
+
+	return acc, err
 }
