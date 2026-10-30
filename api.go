@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 
@@ -57,26 +56,25 @@ func (s *APIServer) Run() {
 	// The change is simple, mux does not expect an error to be returned.
 	// Thus, we will make our own custom functions that will allow us
 	// to handle error where we want
-	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount))
-	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccount))
+	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleGetAllAccounts)).Methods("GET")
+	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleCreateAccount)).Methods("POST")
+	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccount)).Methods("GET")
+	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleUpdateAccount)).Methods("PATCH")
+	router.HandleFunc("/account/{id}/transfer", makeHTTPHandleFunc(s.handleTransfer)).Methods("PATCH")
+	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleDeleteAccount)).Methods("DELETE")
 
 	log.Println("Server running at port: ", s.listenAddr)
 
 	http.ListenAndServe(s.listenAddr, router)
 }
 
-// This method acts as our router
-func (s *APIServer) handleAccount(w http.ResponseWriter, r *http.Request) error {
-	switch r.Method {
-	case "GET":
-		return s.handleGetAccount(w, r)
-	case "POST":
-		return s.handleCreateAccount(w, r)
-	case "DELETE":
-		return s.handleDeleteAccount(w, r)
-	default:
-		return fmt.Errorf("Method not allowed: %s", r.Method)
+func (s *APIServer) handleGetAllAccounts(w http.ResponseWriter, r *http.Request) error {
+	res, err := s.store.GetAccounts()
+	if err != nil {
+		return err
 	}
+
+	return WriteJSON(w, http.StatusOK, res)
 }
 
 func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) error {
@@ -85,6 +83,21 @@ func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) err
 }
 
 func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) error {
+	createAccPayload := new(CreateAccountDTO)
+	if err := json.NewDecoder(r.Body).Decode(&createAccPayload); err != nil {
+		return err
+	}
+
+	account := NewAccount(createAccPayload.FirstName, createAccPayload.LastName)
+
+	if err := s.store.CreateAccount(account); err != nil {
+		return err
+	}
+
+	return WriteJSON(w, http.StatusCreated, account)
+}
+
+func (s *APIServer) handleUpdateAccount(W http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
