@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,40 +11,58 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// This is a helper function that will convert the response
-// to JSON
-func WriteJSON(w http.ResponseWriter, status int, v any) error {
+// APIError represents an error response with an HTTP status code.
+type APIError struct {
+	StatusCode int    `json:"status"`
+	Message    string `json:"error"`
+}
+
+func (e *APIError) Error() string {
+	return e.Message
+}
+
+// NewAPIError creates an APIError with the given HTTP status code and message.
+func NewAPIError(statusCode int, msg string) *APIError {
+	return &APIError{
+		StatusCode: statusCode,
+		Message:    msg,
+	}
+}
+
+// writeJSON serializes v as JSON and writes it to the response with the given status code.
+func writeJSON(w http.ResponseWriter, status int, v any) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status) // Set the status for the response
+	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(v)
 }
 
-type APIError struct {
-	Error string `json:"error"`
-}
+// apiHandlerFunc is an HTTP handler that returns an error for centralized error handling.
+type apiHandlerFunc func(w http.ResponseWriter, r *http.Request) error
 
-// Our custom handler function that allow us to handle
-// errors within the functions we want
-type apiFunc func(w http.ResponseWriter, r *http.Request) error
-
-// This acts as a higher order function that satisfies the
-// expected type by mux but also fulfills our functionality
-// of handling error the way we want
-func makeHTTPHandleFunc(f apiFunc) http.HandlerFunc {
+// makeHTTPHandler wraps an apiHandlerFunc into a standard http.HandlerFunc,
+// catching returned errors and writing appropriate JSON error responses.
+func makeHTTPHandler(f apiHandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := f(w, r); err != nil {
-			// handle error here
-			WriteJSON(w, http.StatusBadRequest, APIError{Error: err.Error()})
+			var apiErr *APIError
+			if errors.As(err, &apiErr) {
+				writeJSON(w, apiErr.StatusCode, apiErr)
+			} else {
+				writeJSON(w, http.StatusInternalServerError, &APIError{
+					StatusCode: http.StatusInternalServerError,
+					Message:    "internal server error",
+				})
+			}
 		}
 	}
 }
 
 type APIServer struct {
 	listenAddr string
-	store      Storage
+	store      AccountStore
 }
 
-func NewAPIServer(listenAddr string, store Storage) *APIServer {
+func NewAPIServer(listenAddr string, store AccountStore) *APIServer {
 	return &APIServer{
 		listenAddr: listenAddr,
 		store:      store,
@@ -53,71 +72,85 @@ func NewAPIServer(listenAddr string, store Storage) *APIServer {
 func (s *APIServer) Run() {
 	router := mux.NewRouter()
 
-	// We will get an error if we use our custom handle functions because
-	// of the type difference between was mux wants and what we are providing
-	// The change is simple, mux does not expect an error to be returned.
-	// Thus, we will make our own custom functions that will allow us
-	// to handle error where we want
-	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleGetAllAccounts)).Methods("GET")
-	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleCreateAccount)).Methods("POST")
-	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccount)).Methods("GET")
-	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleUpdateAccount)).Methods("PATCH")
-	router.HandleFunc("/account/{id}/transfer", makeHTTPHandleFunc(s.handleTransfer)).Methods("PATCH")
-	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleDeleteAccount)).Methods("DELETE")
+	router.HandleFunc("/account", makeHTTPHandler(s.handleGetAllAccounts)).Methods("GET")
+	router.HandleFunc("/account", makeHTTPHandler(s.handleCreateAccount)).Methods("POST")
+	router.HandleFunc("/account/{id}", makeHTTPHandler(s.handleGetAccountByID)).Methods("GET")
+	router.HandleFunc("/account/{id}", makeHTTPHandler(s.handleUpdateAccount)).Methods("PATCH")
+	router.HandleFunc("/account/{id}/transfer", makeHTTPHandler(s.handleTransfer)).Methods("PATCH")
+	router.HandleFunc("/account/{id}", makeHTTPHandler(s.handleDeleteAccount)).Methods("DELETE")
 
-	log.Println("Server running at port: ", s.listenAddr)
+	log.Println("Server running at port:", s.listenAddr)
 
 	http.ListenAndServe(s.listenAddr, router)
 }
 
 func (s *APIServer) handleGetAllAccounts(w http.ResponseWriter, r *http.Request) error {
-	res, err := s.store.GetAccounts()
+	accounts, err := s.store.GetAccounts()
 	if err != nil {
-		return err
+		return NewAPIError(http.StatusInternalServerError, "failed to retrieve accounts")
 	}
 
-	return WriteJSON(w, http.StatusOK, res)
+	return writeJSON(w, http.StatusOK, accounts)
 }
 
-func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) error {
-	// This will be a string and we need to conver it into an int
+func (s *APIServer) handleGetAccountByID(w http.ResponseWriter, r *http.Request) error {
 	idStr := mux.Vars(r)["id"]
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
-		return fmt.Errorf("invalid id: %s", idStr)
+		return NewAPIError(http.StatusBadRequest, fmt.Sprintf("invalid account id: %s", idStr))
 	}
 
 	acc, err := s.store.GetAccountByID(id)
 	if err != nil {
-		return err
+		if errors.Is(err, ErrAccountNotFound) {
+			return NewAPIError(http.StatusNotFound, fmt.Sprintf("account %d not found", id))
+		}
+		return NewAPIError(http.StatusInternalServerError, "failed to retrieve account")
 	}
 
-	return WriteJSON(w, http.StatusOK, acc)
+	return writeJSON(w, http.StatusOK, acc)
 }
 
 func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) error {
-	createAccPayload := new(CreateAccountDTO)
-	if err := json.NewDecoder(r.Body).Decode(&createAccPayload); err != nil {
-		return err
+	req := new(CreateAccountDTO)
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+		return NewAPIError(http.StatusBadRequest, "invalid request body")
 	}
 
-	account := NewAccount(createAccPayload.FirstName, createAccPayload.LastName)
+	if req.FirstName == "" || req.LastName == "" {
+		return NewAPIError(http.StatusBadRequest, "first_name and last_name are required")
+	}
+
+	account := NewAccount(req.FirstName, req.LastName)
 
 	if err := s.store.CreateAccount(account); err != nil {
-		return err
+		return NewAPIError(http.StatusInternalServerError, "failed to create account")
 	}
 
-	return WriteJSON(w, http.StatusCreated, account)
+	return writeJSON(w, http.StatusCreated, account)
 }
 
-func (s *APIServer) handleUpdateAccount(W http.ResponseWriter, r *http.Request) error {
-	return nil
+func (s *APIServer) handleUpdateAccount(w http.ResponseWriter, r *http.Request) error {
+	return NewAPIError(http.StatusNotImplemented, "update account not implemented")
 }
 
 func (s *APIServer) handleDeleteAccount(w http.ResponseWriter, r *http.Request) error {
-	return nil
+	idStr := mux.Vars(r)["id"]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return NewAPIError(http.StatusBadRequest, fmt.Sprintf("invalid account id: %s", idStr))
+	}
+
+	if err := s.store.DeleteAccount(id); err != nil {
+		if errors.Is(err, ErrAccountNotFound) {
+			return NewAPIError(http.StatusNotFound, fmt.Sprintf("account %d not found", id))
+		}
+		return NewAPIError(http.StatusInternalServerError, "failed to delete account")
+	}
+
+	return writeJSON(w, http.StatusOK, map[string]int{"deleted": id})
 }
 
 func (s *APIServer) handleTransfer(w http.ResponseWriter, r *http.Request) error {
-	return nil
+	return NewAPIError(http.StatusNotImplemented, "transfer not implemented")
 }
