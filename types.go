@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+type TransferDTO struct {
+	ToAccount int     `json:"to_account"`
+	Amount    float64 `json:"amount"`
+}
+
 type CreateAccountDTO struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`

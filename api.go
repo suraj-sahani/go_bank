@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 )
 
@@ -74,14 +77,64 @@ func (s *APIServer) Run() {
 
 	router.HandleFunc("/account", makeHTTPHandler(s.handleGetAllAccounts)).Methods("GET")
 	router.HandleFunc("/account", makeHTTPHandler(s.handleCreateAccount)).Methods("POST")
-	router.HandleFunc("/account/{id}", makeHTTPHandler(s.handleGetAccountByID)).Methods("GET")
+	router.HandleFunc("/account/{id}", withJWTAuth(makeHTTPHandler(s.handleGetAccountByID))).Methods("GET")
 	router.HandleFunc("/account/{id}", makeHTTPHandler(s.handleUpdateAccount)).Methods("PATCH")
-	router.HandleFunc("/account/{id}/transfer", makeHTTPHandler(s.handleTransfer)).Methods("PATCH")
 	router.HandleFunc("/account/{id}", makeHTTPHandler(s.handleDeleteAccount)).Methods("DELETE")
+	router.HandleFunc("/account/transfer", makeHTTPHandler(s.handleTransfer)).Methods("POST")
 
 	log.Println("Server running at port:", s.listenAddr)
 
 	http.ListenAndServe(s.listenAddr, router)
+}
+
+func createJWT(acc *Account) (string, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		return "", fmt.Errorf("JWT_SECRET environment variable not set")
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   string(acc.ID),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(10 * time.Minute)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		NotBefore: jwt.NewNumericDate(time.Now()),
+		Issuer:    "go_bank_api",
+	})
+
+	tokenString, err := token.SignedString(secret)
+	if err != nil {
+		return "", err
+	}
+
+	return tokenString, nil
+}
+
+func validateJWT(tokenString string) (*jwt.Token, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		return nil, fmt.Errorf("JWT_SECRET environment variable not set")
+	}
+
+	return jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
+		return []byte(secret), nil
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+}
+
+func withJWTAuth(handlerFunc http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tokenHeader := r.Header.Get("x-jwt-token")
+
+		_, err := validateJWT(tokenHeader)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, &APIError{
+				StatusCode: http.StatusUnauthorized,
+				Message:    "Unauthorized",
+			})
+			return
+		}
+
+		handlerFunc(w, r)
+	}
 }
 
 func (s *APIServer) handleGetAllAccounts(w http.ResponseWriter, r *http.Request) error {
@@ -116,6 +169,7 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
 		return NewAPIError(http.StatusBadRequest, "invalid request body")
 	}
+	defer r.Body.Close()
 
 	if req.FirstName == "" || req.LastName == "" {
 		return NewAPIError(http.StatusBadRequest, "first_name and last_name are required")
@@ -152,5 +206,11 @@ func (s *APIServer) handleDeleteAccount(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) handleTransfer(w http.ResponseWriter, r *http.Request) error {
-	return NewAPIError(http.StatusNotImplemented, "transfer not implemented")
+	req := new(TransferDTO)
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+		return NewAPIError(http.StatusBadRequest, "invalid request body")
+	}
+	defer r.Body.Close()
+
+	return writeJSON(w, http.StatusOK, req)
 }
