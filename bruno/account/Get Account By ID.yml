@@ -6,9 +6,12 @@ info:
 http:
   method: GET
   url: "{{BASE_URL}}/account/:id"
+  headers:
+    - name: x-jwt-token
+      value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb19iYW5rX2FwaSIsInN1YiI6IjEiLCJleHAiOjE3OTQzMzY3NDksIm5iZiI6MTc5NDMzNjE0OSwiaWF0IjoxNzk0MzM2MTQ5fQ.N3cY9XkYyA0updcYFAhip1QllbOn-5x3iCchz9BoNcA
   params:
     - name: id
-      value: "3"
+      value: "1"
       type: path
   auth: inherit
 
