@@ -102,7 +102,7 @@ func createJWT(acc *Account) (string, error) {
 		Issuer:    "go_bank_api",
 	})
 
-	tokenString, err := token.SignedString(secret)
+	tokenString, err := token.SignedString([]byte(secret))
 	if err != nil {
 		return "", err
 	}
@@ -155,6 +155,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) error {
 
 	token, err := createJWT(acc)
 	if err != nil {
+		fmt.Printf("Error generating token: %v", err)
 		return NewAPIError(http.StatusInternalServerError, "failed to generate token")
 	}
 
