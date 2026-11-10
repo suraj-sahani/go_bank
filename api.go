@@ -75,6 +75,7 @@ func NewAPIServer(listenAddr string, store AccountStore) *APIServer {
 func (s *APIServer) Run() {
 	router := mux.NewRouter()
 
+	router.HandleFunc("/login", makeHTTPHandler(s.handleLogin)).Methods("POST")
 	router.HandleFunc("/account", makeHTTPHandler(s.handleGetAllAccounts)).Methods("GET")
 	router.HandleFunc("/account", makeHTTPHandler(s.handleCreateAccount)).Methods("POST")
 	router.HandleFunc("/account/{id}", withJWTAuth(makeHTTPHandler(s.handleGetAccountByID))).Methods("GET")
@@ -94,7 +95,7 @@ func createJWT(acc *Account) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
-		Subject:   string(acc.ID),
+		Subject:   strconv.Itoa(acc.ID),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(10 * time.Minute)),
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		NotBefore: jwt.NewNumericDate(time.Now()),
@@ -135,6 +136,32 @@ func withJWTAuth(handlerFunc http.HandlerFunc) http.HandlerFunc {
 
 		handlerFunc(w, r)
 	}
+}
+
+func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) error {
+	reqDto := new(LoginDTO)
+	if err := json.NewDecoder(r.Body).Decode(&reqDto); err != nil {
+		return NewAPIError(http.StatusBadRequest, "invalid request body")
+	}
+
+	defer r.Body.Close()
+	acc, err := s.store.Login(reqDto)
+	if err != nil {
+		if errors.Is(err, ErrAccountNotFound) {
+			return NewAPIError(http.StatusNotFound, "Unauthorized")
+		}
+		return NewAPIError(http.StatusBadRequest, fmt.Sprintf("Login failed: %v", err))
+	}
+
+	jwt, err := createJWT(acc)
+	if err != nil {
+		return NewAPIError(http.StatusBadRequest, fmt.Sprintf("login failed: %v", err))
+	}
+
+	return writeJSON(w, http.StatusOK, map[string]any{
+		"user":  acc,
+		"token": jwt,
+	})
 }
 
 func (s *APIServer) handleGetAllAccounts(w http.ResponseWriter, r *http.Request) error {

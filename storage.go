@@ -14,6 +14,7 @@ var ErrAccountNotFound = errors.New("account not found")
 
 // AccountStore defines the interface for account persistence operations.
 type AccountStore interface {
+	Login(*LoginDTO) (*Account, error)
 	CreateAccount(*Account) error
 	UpdateAccount(*Account) error
 	DeleteAccount(int) error
@@ -48,9 +49,12 @@ func NewPostgresAccountStore() (*PostgresAccountStore, error) {
 	}, nil
 }
 
-// Init creates the required database tables if they don't already exist.
+// Init creates the required database tables and sequences if they don't already exist.
 func (s *PostgresAccountStore) Init() error {
-	return s.createAccountTable()
+	if err := s.createAccountTable(); err != nil {
+		return err
+	}
+	return s.createAccountNumberSequence()
 }
 
 func (s *PostgresAccountStore) createAccountTable() error {
@@ -68,7 +72,40 @@ func (s *PostgresAccountStore) createAccountTable() error {
 	return err
 }
 
+func (s *PostgresAccountStore) createAccountNumberSequence() error {
+	query := `CREATE SEQUENCE IF NOT EXISTS account_number_seq START 1;`
+	_, err := s.db.Exec(query)
+	return err
+}
+
+func (s *PostgresAccountStore) Login(c *LoginDTO) (*Account, error) {
+	query := `
+		SELECT * FROM accounts
+		WHERE account_number = $1
+	`
+
+	rows, err := s.db.Query(query, c.AccountNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+		return scanRowToAccount(rows)
+	}
+
+	return nil, ErrAccountNotFound
+}
+
 func (s *PostgresAccountStore) CreateAccount(a *Account) error {
+	// Fetch the next value from the sequence and scramble it via Feistel cipher
+	var seqVal int64
+	if err := s.db.QueryRow("SELECT nextval('account_number_seq')").Scan(&seqVal); err != nil {
+		return fmt.Errorf("failed to generate account number: %w", err)
+	}
+	a.AccountNumber = GenerateAccountNumber(uint32(seqVal))
+
 	query := `
 			INSERT INTO accounts (
 				first_name,

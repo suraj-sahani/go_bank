@@ -1,9 +1,13 @@
 package main
 
 import (
-	"math/rand/v2"
 	"time"
 )
+
+type LoginDTO struct {
+	AccountNumber int64  `json:"account_number"`
+	Password      string `json:"password"`
+}
 
 type TransferDTO struct {
 	ToAccount int     `json:"to_account"`
@@ -27,10 +31,9 @@ type Account struct {
 
 func NewAccount(firstName, lastName string) *Account {
 	return &Account{
-		FirstName:     firstName,
-		LastName:      lastName,
-		AccountNumber: int64(rand.IntN(1000000)),
-		CreatedAt:     time.Now().UTC(),
-		UpdatedAt:     time.Now().UTC(),
+		FirstName: firstName,
+		LastName:  lastName,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
 	}
 }
