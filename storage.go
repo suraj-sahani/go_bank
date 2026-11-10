@@ -12,6 +12,9 @@ import (
 // ErrAccountNotFound is returned when an account lookup yields no results.
 var ErrAccountNotFound = errors.New("account not found")
 
+// ErrInvalidCredentials is returned when the password does not match.
+var ErrInvalidCredentials = errors.New("invalid credentials")
+
 // AccountStore defines the interface for account persistence operations.
 type AccountStore interface {
 	Login(*LoginDTO) (*Account, error)
@@ -63,6 +66,7 @@ func (s *PostgresAccountStore) createAccountTable() error {
 			first_name     VARCHAR(50) NOT NULL,
 			last_name      VARCHAR(50) NOT NULL,
 			account_number BIGINT NOT NULL UNIQUE,
+			password_hash  VARCHAR(255) NOT NULL,
 			balance        BIGINT NOT NULL DEFAULT 0,
 			created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -78,21 +82,30 @@ func (s *PostgresAccountStore) createAccountNumberSequence() error {
 	return err
 }
 
+// Login fetches the account by account number and verifies the password.
+// Returns ErrAccountNotFound if no account exists, or ErrInvalidCredentials
+// if the password doesn't match. This prevents account enumeration by
+// keeping the two failure modes indistinguishable at the API layer.
 func (s *PostgresAccountStore) Login(c *LoginDTO) (*Account, error) {
-	query := `
-		SELECT * FROM accounts
-		WHERE account_number = $1
-	`
+	query := `SELECT * FROM accounts WHERE account_number = $1`
 
 	rows, err := s.db.Query(query, c.AccountNumber)
 	if err != nil {
 		return nil, err
 	}
-
 	defer rows.Close()
 
 	for rows.Next() {
-		return scanRowToAccount(rows)
+		acc, err := scanRowToAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		if !acc.VerifyPassword(c.Password) {
+			return nil, ErrInvalidCredentials
+		}
+
+		return acc, nil
 	}
 
 	return nil, ErrAccountNotFound
@@ -111,15 +124,17 @@ func (s *PostgresAccountStore) CreateAccount(a *Account) error {
 				first_name,
 				last_name,
 				account_number,
+				password_hash,
 				balance
 			)
-			VALUES ($1, $2, $3, $4)`
+			VALUES ($1, $2, $3, $4, $5)`
 
 	_, err := s.db.Exec(
 		query,
 		a.FirstName,
 		a.LastName,
 		a.AccountNumber,
+		a.PasswordHash,
 		a.Balance,
 	)
 
@@ -193,6 +208,7 @@ func scanRowToAccount(rows *sql.Rows) (*Account, error) {
 		&acc.FirstName,
 		&acc.LastName,
 		&acc.AccountNumber,
+		&acc.PasswordHash,
 		&acc.Balance,
 		&acc.CreatedAt,
 		&acc.UpdatedAt,

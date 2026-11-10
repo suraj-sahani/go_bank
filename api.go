@@ -143,24 +143,24 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) error {
 	if err := json.NewDecoder(r.Body).Decode(&reqDto); err != nil {
 		return NewAPIError(http.StatusBadRequest, "invalid request body")
 	}
-
 	defer r.Body.Close()
+
 	acc, err := s.store.Login(reqDto)
 	if err != nil {
-		if errors.Is(err, ErrAccountNotFound) {
-			return NewAPIError(http.StatusNotFound, "Unauthorized")
+		if errors.Is(err, ErrAccountNotFound) || errors.Is(err, ErrInvalidCredentials) {
+			return NewAPIError(http.StatusUnauthorized, "invalid account number or password")
 		}
-		return NewAPIError(http.StatusBadRequest, fmt.Sprintf("Login failed: %v", err))
+		return NewAPIError(http.StatusInternalServerError, "login failed")
 	}
 
-	jwt, err := createJWT(acc)
+	token, err := createJWT(acc)
 	if err != nil {
-		return NewAPIError(http.StatusBadRequest, fmt.Sprintf("login failed: %v", err))
+		return NewAPIError(http.StatusInternalServerError, "failed to generate token")
 	}
 
 	return writeJSON(w, http.StatusOK, map[string]any{
 		"user":  acc,
-		"token": jwt,
+		"token": token,
 	})
 }
 
@@ -202,7 +202,14 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 		return NewAPIError(http.StatusBadRequest, "first_name and last_name are required")
 	}
 
-	account := NewAccount(req.FirstName, req.LastName)
+	if req.Password == "" {
+		return NewAPIError(http.StatusBadRequest, "password is required")
+	}
+
+	account, err := NewAccount(req.FirstName, req.LastName, req.Password)
+	if err != nil {
+		return NewAPIError(http.StatusInternalServerError, "failed to process account")
+	}
 
 	if err := s.store.CreateAccount(account); err != nil {
 		return NewAPIError(http.StatusInternalServerError, "failed to create account")
